@@ -1,14 +1,18 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps
-// (several in a slow frame, none in a fast one), and the renderer paints what is there. The game
-// moves between four screens: title, play, paused and game over.
+// Boot and the one loop: input is read every frame, the world advances in
+// fixed 1/60 s steps (several in a slow frame, none in a fast one), and the
+// renderer paints what is there. The game moves between five screens: title,
+// play, paused, busted and story complete. Cash and story progress are saved
+// to localStorage on every mission and on every bust.
 //
-// ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that scene
-// instead of running the loop, paints it twice and sets window.__shotReady for a screenshot.
-import { BEST_KEY, LIVES, STEP } from './config.js';
-import { createRandom } from './random.js';
-import { createWorld, EVENT_HIT, EVENT_OVER } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// ?seed=N fixes the city layout. ?shot=start|play|mission|end (with &seed=N)
+// stages that scene instead of running the loop, paints it twice and sets
+// window.__shotReady for a screenshot.
+import { SAVE_KEY, STEP } from './config.js';
+import { mulberry32 } from './random.js';
+import { createWorld, EVENT_BUSTED, EVENT_COMPLETE, EVENT_CRASH, EVENT_MISSION, EVENT_PICKUP, EVENT_PUNCH } from './world.js';
+import { ACTION_CONFIRM, ACTION_INTERACT, ACTION_MUTE, ACTION_PAUSE, ACTION_PUNCH, createInput } from './input.js';
+import { createAudio } from './audio.js';
+import { createRenderer, SCREEN_COMPLETE, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { stageShot } from './shots.js';
 
 /** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
@@ -21,23 +25,37 @@ const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() 
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
-const world = createWorld(createRandom(seed));
+const world = createWorld(mulberry32(seed));
 const renderer = createRenderer(canvas);
+const audio = createAudio();
+// Debug handle for automated play-testing (read-only state inspection).
+window.__velvet = { world, get screen() { return currentScreen(); } };
+let currentScreen = () => SCREEN_TITLE;
 
-function readBest() {
+function readSave() {
   try {
-    return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const save = JSON.parse(raw);
+    if (typeof save.cash !== 'number' || typeof save.missionIndex !== 'number') return null;
+    return save;
   } catch {
-    return 0;
+    return null;
   }
 }
 
-function saveBest(value) {
+function saveGame() {
   try {
-    window.localStorage.setItem(BEST_KEY, String(value));
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(world.saveData()));
   } catch {
-    // Storage can be off (private windows): the best score then lasts this visit only.
+    // Storage can be off (private windows): progress then lasts this visit only.
   }
+}
+
+let save = readSave();
+if (save) {
+  world.applySave(save);
+  world.state.hasSave = true;
 }
 
 function runShot(name) {
@@ -55,35 +73,40 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   let screen = SCREEN_TITLE;
-  let best = readBest();
+  currentScreen = () => screen;
   let accumulator = 0;
   let last = performance.now();
 
-  // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
   function announce(message) {
     status.textContent = message;
   }
 
   function startGame() {
     world.reset();
+    if (save) world.applySave(save);
     accumulator = 0;
     screen = SCREEN_PLAY;
-    announce(`Playing. ${LIVES} lives.`);
+    audio.unlock();
+    const mission = world.currentMission();
+    announce(mission ? `Playing. Job: ${mission.title}.` : 'Playing. Free roam.');
   }
 
   function endGame() {
     screen = SCREEN_OVER;
-    if (world.state.score > best) {
-      best = world.state.score;
-      saveBest(best);
-    }
-    announce(`Game over. Score ${world.state.score}. Best ${best}.`);
+    save = world.saveData();
+    saveGame();
+    audio.busted();
+    announce(`Busted. ${world.state.bustReason} Cash $${world.state.cash}.`);
   }
 
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER)) startGame();
-    else if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
+  function handleActions(actions) {
+    if (actions & ACTION_MUTE) {
+      const muted = audio.toggleMute();
+      announce(muted ? 'Muted.' : 'Sound on.');
+    }
+    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_COMPLETE)) {
+      startGame();
+    } else if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
       announce('Paused.');
     } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
@@ -92,33 +115,56 @@ function runGame() {
     }
   }
 
-  function step() {
+  function step(actions) {
     if (screen === SCREEN_TITLE) {
-      world.step(STEP, 0, true);
+      world.step(STEP, { x: 0, y: 0, run: false }, 0, true);
       return;
     }
-    const events = world.step(STEP, input.direction(), false);
-    if (events & EVENT_OVER) endGame();
-    else if (events & EVENT_HIT) announce(world.state.lives === 1 ? 'Hit. 1 life left.' : `Hit. ${world.state.lives} lives left.`);
+    const worldActions = (actions & ACTION_INTERACT ? 4 : 0) | (actions & ACTION_PUNCH ? 8 : 0);
+    const events = world.step(STEP, input.move(), worldActions, false);
+    if (events & EVENT_BUSTED) endGame();
+    else if (events & EVENT_COMPLETE) {
+      screen = SCREEN_COMPLETE;
+      save = world.saveData();
+      saveGame();
+      audio.mission();
+      announce('Story complete. Velvet Bay is yours.');
+    } else if (events & EVENT_MISSION) {
+      save = world.saveData();
+      saveGame();
+      audio.mission();
+      announce(world.state.toast);
+    }
+    if (events & EVENT_PICKUP) audio.pickup();
+    if (events & EVENT_PUNCH) audio.punch();
+    if (events & EVENT_CRASH) audio.crash();
   }
 
   function frame(now) {
     requestAnimationFrame(frame);
     accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
-    handleActions();
+    const actions = input.takeActions();
+    handleActions(actions);
     if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
+      // One-shot presses act on the first fixed step only, so a slow frame
+      // never double-uses one press (enter a car, then instantly step out).
+      let stepActions = actions;
       while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
-        step();
+        step(stepActions);
+        stepActions = 0;
         accumulator -= STEP;
       }
     } else {
       accumulator = 0;
     }
-    renderer.draw(world.state, screen, best);
+    const p = world.state.player;
+    const speed01 = p.car ? Math.abs(p.car.speed) / 560 : p.speed > 0 ? 0.15 : 0;
+    audio.update(STEP, screen === SCREEN_PLAY ? speed01 : 0, world.state.wanted);
+    renderer.draw(world.state, screen, save ? save.cash : 0);
   }
 
-  // Leaving the tab pauses a running game rather than letting blocks fall unseen.
+  // Leaving the tab pauses a running game rather than letting the VCPD close in unseen.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && screen === SCREEN_PLAY) {
       screen = SCREEN_PAUSED;
@@ -126,7 +172,7 @@ function runGame() {
     }
   });
 
-  announce('Block Dodger. Press Space or click to start.');
+  announce('Velvet Bay, Street Heat. Press Enter or click to start.');
   requestAnimationFrame(frame);
 }
 
