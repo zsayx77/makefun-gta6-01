@@ -1,6 +1,7 @@
-// Keyboard and pointer input. Held keys give a move vector; one-shot presses
-// (interact, punch, confirm, pause, mute) are queued as bit flags and taken
-// once by the loop, so a press between two frames is never lost or counted twice.
+// Keyboard and pointer input. Movement keys are read as a held set; the
+// one-shot presses (confirm, pause, interact, punch, mute) are queued as
+// bit flags and collected once per frame, so a press that lands between two
+// frames is neither lost nor counted twice.
 
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
@@ -8,62 +9,70 @@ export const ACTION_INTERACT = 4;
 export const ACTION_PUNCH = 8;
 export const ACTION_MUTE = 16;
 
-const UP = new Set(['ArrowUp', 'KeyW']);
-const DOWN = new Set(['ArrowDown', 'KeyS']);
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-const INTERACT = new Set(['KeyE']);
-const PUNCH = new Set(['Space']);
-const MUTE = new Set(['KeyM']);
-const RUN = new Set(['ShiftLeft', 'ShiftRight']);
+const KEY_UP = ['ArrowUp', 'KeyW'];
+const KEY_DOWN = ['ArrowDown', 'KeyS'];
+const KEY_LEFT = ['ArrowLeft', 'KeyA'];
+const KEY_RIGHT = ['ArrowRight', 'KeyD'];
+const KEY_RUN = ['ShiftLeft', 'ShiftRight'];
+const KEY_CONFIRM = ['Enter'];
+const KEY_PAUSE = ['KeyP', 'Escape'];
+const KEY_INTERACT = ['KeyE'];
+const KEY_PUNCH = ['Space'];
+const KEY_MUTE = ['KeyM'];
+
+/** True when any code of the list is currently held down. */
+function anyHeld(held, codes) {
+  for (const code of codes) if (held.has(code)) return true;
+  return false;
+}
 
 export function createInput(target) {
   const held = new Set();
-  let actions = 0;
+  let queued = 0;
 
   window.addEventListener('keydown', (event) => {
-    if (UP.has(event.code) || DOWN.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code) || RUN.has(event.code)) {
-      held.add(event.code);
-    } else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else if (INTERACT.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_INTERACT;
-    } else if (PUNCH.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PUNCH;
-    } else if (MUTE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_MUTE;
-    } else return;
+    const code = event.code;
+    if (KEY_UP.includes(code) || KEY_DOWN.includes(code) || KEY_LEFT.includes(code)
+      || KEY_RIGHT.includes(code) || KEY_RUN.includes(code)) {
+      held.add(code);
+    } else if (KEY_CONFIRM.includes(code)) {
+      if (!event.repeat) queued |= ACTION_CONFIRM;
+    } else if (KEY_PAUSE.includes(code)) {
+      if (!event.repeat) queued |= ACTION_PAUSE;
+    } else if (KEY_INTERACT.includes(code)) {
+      if (!event.repeat) queued |= ACTION_INTERACT;
+    } else if (KEY_PUNCH.includes(code)) {
+      if (!event.repeat) queued |= ACTION_PUNCH;
+    } else if (KEY_MUTE.includes(code)) {
+      if (!event.repeat) queued |= ACTION_MUTE;
+    } else {
+      return;
+    }
     event.preventDefault();
   });
   window.addEventListener('keyup', (event) => {
     held.delete(event.code);
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
+  // A key let go while the tab is hidden never sends keyup: drop everything on blur.
   window.addEventListener('blur', () => held.clear());
+  // A click or tap on the canvas counts as confirm (start the game).
   target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+    queued |= ACTION_CONFIRM;
   });
 
-  function has(set) {
-    for (const code of set) if (held.has(code)) return true;
-    return false;
-  }
-
   return {
-    /** Move vector: x -1..1 (left/right or steer), y -1..1 (up/down or accel/brake). */
+    /** The move vector: x is left/right (or steering), y is up/down (or gas/brake). */
     move() {
-      const x = (has(RIGHT) ? 1 : 0) - (has(LEFT) ? 1 : 0);
-      const y = (has(DOWN) ? 1 : 0) - (has(UP) ? 1 : 0);
-      return { x, y, run: has(RUN) };
+      return {
+        x: (anyHeld(held, KEY_RIGHT) ? 1 : 0) - (anyHeld(held, KEY_LEFT) ? 1 : 0),
+        y: (anyHeld(held, KEY_DOWN) ? 1 : 0) - (anyHeld(held, KEY_UP) ? 1 : 0),
+        run: anyHeld(held, KEY_RUN),
+      };
     },
     /** The one-shot presses since the last call, as ACTION_* flags. */
     takeActions() {
-      const taken = actions;
-      actions = 0;
+      const taken = queued;
+      queued = 0;
       return taken;
     },
   };

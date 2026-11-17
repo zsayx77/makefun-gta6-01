@@ -1,20 +1,27 @@
-// Velvet Bay — Street Heat. An original open-world crime game (2D top-down).
-// All tuning numbers and colours in one place. The canvas shows a fixed
-// 1280x720 logical view; the camera pans over a 3200x2400 city.
+// Velvet Bay — Street Heat: an original open-world crime game, top-down 2D.
+// Every tuning number lives in this one module so the rules can be balanced
+// without touching the simulation or the drawing code.
 
+/** The logical view the camera shows: 1280 by 720, scaled to the window. */
 export const VIEW = { width: 1280, height: 720 };
 
-/** The simulation's fixed step, in seconds: 60 updates a second. */
+/** One simulation step, in seconds. The loop runs the world at 60 steps/s. */
 export const STEP = 1 / 60;
 
+/** The city is 3200 wide, 2400 tall; the harbour water fills the south edge. */
 export const WORLD = { width: 3200, height: 2400 };
+
+/** How wide a road is, in world units. */
 export const ROAD_W = 140;
-/** Road centre lines: a grid the whole city is built on. */
+
+/** Centre lines of the road grid, vertical (x) and horizontal (y). */
 export const ROADS_X = [300, 700, 1100, 1500, 1900, 2300, 2700];
 export const ROADS_Y = [300, 700, 1100, 1500, 1900];
-/** The harbour water starts here; the docks pier sticks out into it. */
+
+/** The first y of open water; below it is harbour, except for the pier. */
 export const WATER_Y = 2150;
 
+/** The player on foot: size, speeds, health and slow regeneration. */
 export const PLAYER = {
   radius: 14,
   walkSpeed: 210,
@@ -23,6 +30,7 @@ export const PLAYER = {
   hpRegen: 3,
 };
 
+/** How a driven car handles: size, acceleration, top speed, turning. */
 export const CAR = {
   length: 64,
   width: 32,
@@ -34,16 +42,18 @@ export const CAR = {
   hp: 100,
 };
 
+/** Wanted level: 0 to 5 stars, what each crime adds, how fast heat cools. */
 export const WANTED = {
   max: 5,
-  decaySeconds: 22, // per star, when no cop is near and no fresh crime
-  decayMission4: 12,
+  decaySeconds: 22, // seconds per star, once the heat has been off a while
+  decayMission4: 12, // the final mission cools faster
   stealCar: 1,
   punchPed: 1,
   punchCop: 2,
   ramCop: 1,
 };
 
+/** Police behaviour: chase speed, bust range and timing, damage, car count. */
 export const POLICE = {
   carSpeed: 490,
   footSpeed: 238,
@@ -54,11 +64,13 @@ export const POLICE = {
   maxCars: 3,
 };
 
+/** Ambient city life: how many traffic cars and pedestrians, and their speeds. */
 export const TRAFFIC = { count: 22, speedMin: 130, speedMax: 210 };
 export const PEDS = { count: 26, speedMin: 45, speedMax: 80 };
 export const PARKED = { count: 14 };
 export const CASH_PICKUPS = 8;
 
+/** Every colour the renderer uses, in one table. */
 export const PALETTE = {
   grass: '#2e5d3a',
   grassDark: '#274f31',
@@ -90,5 +102,5 @@ export const PALETTE = {
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
-/** Where the save (cash + story progress) is kept between visits (this browser only). */
+/** localStorage key for the save: cash plus how far the story has gone. */
 export const SAVE_KEY = 'velvet-bay.save.v1';

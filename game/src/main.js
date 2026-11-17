@@ -2,10 +2,10 @@
 // fixed 1/60 s steps (several in a slow frame, none in a fast one), and the
 // renderer paints what is there. The game moves between five screens: title,
 // play, paused, busted and story complete. Cash and story progress are saved
-// to localStorage on every mission and on every bust.
+// to localStorage after every mission and every bust.
 //
 // ?seed=N fixes the city layout. ?shot=start|play|mission|end (with &seed=N)
-// stages that scene instead of running the loop, paints it twice and sets
+// stages that scene instead of running the loop, paints it twice, and sets
 // window.__shotReady for a screenshot.
 import { SAVE_KEY, STEP } from './config.js';
 import { mulberry32 } from './random.js';
@@ -29,9 +29,10 @@ const world = createWorld(mulberry32(seed));
 const renderer = createRenderer(canvas);
 const audio = createAudio();
 // Debug handle for automated play-testing (read-only state inspection).
-window.__velvet = { world, get screen() { return currentScreen(); } };
-let currentScreen = () => SCREEN_TITLE;
+let screenNow = () => SCREEN_TITLE;
+window.__velvet = { world, get screen() { return screenNow(); } };
 
+/** The saved game, or null when there is none or it does not parse. */
 function readSave() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
@@ -44,6 +45,7 @@ function readSave() {
   }
 }
 
+/** Write the world's cash and story progress to localStorage. */
 function saveGame() {
   try {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(world.saveData()));
@@ -58,6 +60,7 @@ if (save) {
   world.state.hasSave = true;
 }
 
+/** Stage one screenshot scene and paint it twice, then signal readiness. */
 function runShot(name) {
   const scene = stageShot(name, world);
   let painted = 0;
@@ -73,10 +76,14 @@ function runShot(name) {
 function runGame() {
   const input = createInput(canvas);
   let screen = SCREEN_TITLE;
-  currentScreen = () => screen;
+  screenNow = () => screen;
   let accumulator = 0;
   let last = performance.now();
+  // Interact/punch presses wait here until a fixed step runs: a frame
+  // shorter than one step must never swallow a press.
+  let pendingWorld = 0;
 
+  /** The line a screen reader announces. */
   function announce(message) {
     status.textContent = message;
   }
@@ -99,6 +106,7 @@ function runGame() {
     announce(`Busted. ${world.state.bustReason} Cash $${world.state.cash}.`);
   }
 
+  /** The one-shot presses: mute anywhere, start/resume on the menu screens, pause in play. */
   function handleActions(actions) {
     if (actions & ACTION_MUTE) {
       const muted = audio.toggleMute();
@@ -115,6 +123,7 @@ function runGame() {
     }
   }
 
+  /** One fixed step on the current screen, with sounds and saves on events. */
   function step(actions) {
     if (screen === SCREEN_TITLE) {
       world.step(STEP, { x: 0, y: 0, run: false }, 0, true);
@@ -146,17 +155,22 @@ function runGame() {
     last = now;
     const actions = input.takeActions();
     handleActions(actions);
+    pendingWorld |= actions & (ACTION_INTERACT | ACTION_PUNCH);
     if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
       // One-shot presses act on the first fixed step only, so a slow frame
       // never double-uses one press (enter a car, then instantly step out).
-      let stepActions = actions;
+      let stepActions = pendingWorld;
+      let stepped = false;
       while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
         step(stepActions);
         stepActions = 0;
+        stepped = true;
         accumulator -= STEP;
       }
+      if (stepped) pendingWorld = 0;
     } else {
       accumulator = 0;
+      pendingWorld = 0;
     }
     const p = world.state.player;
     const speed01 = p.car ? Math.abs(p.car.speed) / 560 : p.speed > 0 ? 0.15 : 0;
