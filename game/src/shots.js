@@ -1,78 +1,45 @@
-// The screenshot scenes behind ?shot=start|play|mission|end. Each one plays
-// the real rules forward from a fresh world for a fixed number of steps,
-// steered by a waypoint autopilot that follows the roads, so the frame is
-// what a short game really looks like — and the same seed always gives the
-// same frame.
-import { STEP } from './config.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-
-/** How long each scene is played forward, in seconds. */
-const START_SECONDS = 5;
-const PLAY_SECONDS = 3;
-const MISSION_SECONDS = 3;
-
-/**
- * Drive the player's car along road intersections toward the waypoints, in
- * order: steer toward the first waypoint still more than 70 units away.
- */
-function waypointDrive(world, waypoints) {
-  const car = world.state.player.car;
-  if (!car) return { x: 0, y: 0, run: false };
-  let target = waypoints[waypoints.length - 1];
-  for (let i = 0; i < waypoints.length; i += 1) {
-    if (Math.hypot(waypoints[i].x - car.x, waypoints[i].y - car.y) > 70) {
-      target = waypoints[i];
-      break;
-    }
+// Screenshot presets: ?shot=start|play|mission|end arranges a fixed game state
+// so the four dossier shots are reproducible.
+export function applyShot(game, shot) {
+  if (shot === 'start') {
+    game.state = 'title';
+    game.centerCamera();
+    return;
   }
-  const desired = Math.atan2(target.y - car.y, target.x - car.x);
-  let diff = desired - car.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  return { x: Math.max(-1, Math.min(1, diff * 2.5)), y: -1, run: false };
-}
-
-/** Step the world `seconds` forward, asking `moveFn` for the move each step. */
-function playForward(world, seconds, moveFn, attract) {
-  for (let i = 0; i < seconds / STEP; i += 1) {
-    world.step(STEP, moveFn(), 0, attract);
+  if (shot === 'play') {
+    game.state = 'playing';
+    game.cash = 1250;
+    game.wanted = 1;
+    game.timeSinceCrime = 0;
+    game.missionIndex = 0;
+    game.missionTimer = 0;
+    game.enterCar(game.spawnPlayerCar(1000, 840, 0, '#c0392b'));
+    game.player.x = 1000;
+    game.player.y = 840;
+    game.spawnPoliceNear(2);
+    game.centerCamera();
+    return;
   }
-}
-
-/**
- * Set `world` to the named scene (start, play, mission or end; anything else
- * is start) and return the screen to draw over it and the best cash to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name === 'end') {
-    // Busted, with a police car and a foot cop closing in, $450 banked.
-    world.forceBusted('Busted by the VCPD.');
-    world.state.policeCars.push({
-      kind: 'police', x: 1180, y: 1280, angle: Math.PI / 2, speed: 0,
-      color: '#2f6fb2', hp: 100, ramCooldown: 0, copCooldown: 0,
-    });
-    world.state.cops.push({ x: 1150, y: 1330, angle: 0, speed: 0, color: '#1c3a5e', stagger: 0, punchTimer: 0 });
-    world.state.cash = 450;
-    return { screen: SCREEN_OVER, best: 450 };
+  if (shot === 'mission') {
+    game.state = 'playing';
+    game.cash = 1650;
+    game.wanted = 2;
+    game.timeSinceCrime = 0;
+    game.missionIndex = 1;
+    game.missionTimer = 62;
+    game.enterCar(game.spawnPlayerCar(900, 840, 0, '#2980b9'));
+    game.player.x = 900;
+    game.player.y = 840;
+    game.spawnPoliceNear(2);
+    game.centerCamera();
+    return;
   }
-  if (name === 'mission') {
-    // Job two, the timed drop: drive uptown in a blue car, $200 banked.
-    world.setMission(1, 47);
-    world.state.cash = 200;
-    world.placePlayerInCar(700, 1900, -Math.PI / 2, '#3d7ad9');
-    playForward(world, MISSION_SECONDS, () => waypointDrive(world, [{ x: 700, y: 300 }, { x: 300, y: 300 }]), false);
-    return { screen: SCREEN_PLAY, best: 200 };
+  if (shot === 'end') {
+    game.state = 'busted';
+    game.wanted = 5;
+    game.cash = 2400;
+    game.bustedReason = 'Caught by the VCPD after a five-star chase through Velvet Bay.';
+    game.centerCamera();
+    return;
   }
-  if (name === 'play') {
-    // Driving east along 11th Street with one wanted star on Dax.
-    world.state.wanted = 1;
-    world.state.timeSinceCrime = 0;
-    world.placePlayerInCar(1100, 1100, 0, '#d94f3d');
-    playForward(world, PLAY_SECONDS, () => waypointDrive(world, [{ x: 2700, y: 1100 }]), false);
-    return { screen: SCREEN_PLAY, best: 0 };
-  }
-  // start: the title screen over a city that has been living for a while.
-  playForward(world, START_SECONDS, () => ({ x: 0, y: 0, run: false }), true);
-  return { screen: SCREEN_TITLE, best: 0 };
 }
