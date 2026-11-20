@@ -1,7 +1,29 @@
 // Velvet Bay city generation: road grid, building blocks, parks, parked cars,
 // traffic, pedestrians. Everything comes from the seeded RNG in config.
-import { ROADS_V, ROADS_H, ROAD_W, WORLD_W, WORLD_H, PALETTE } from './config.js';
+import { ROADS_V, ROADS_H, ROAD_W, WORLD_W, WORLD_H, PALETTE, SAND_X0, SAND_X1, WATER_RECTS } from './config.js';
 import { range, int, pick } from './random.js';
+
+// The bay coast: palms and umbrellas along the sand, the pier by the dock.
+export function coastDecor(rng) {
+  const palms = [];
+  for (let k = 0; k < 9; k++) {
+    palms.push({
+      x: range(rng, SAND_X0 + 14, SAND_X1 - 26),
+      y: range(rng, 160, WORLD_H - 160),
+      lean: range(rng, -0.25, 0.25),
+      s: range(rng, 0.8, 1.25),
+    });
+  }
+  const umbrellas = [];
+  for (let k = 0; k < 4; k++) {
+    umbrellas.push({
+      x: range(rng, SAND_X0 + 22, SAND_X1 - 14),
+      y: 420 + k * 480 + range(rng, -60, 60),
+      color: pick(rng, PALETTE.umbrella),
+    });
+  }
+  return { palms, umbrellas };
+}
 
 export function createWorld(rng) {
   const buildings = [];
@@ -42,7 +64,7 @@ export function createWorld(rng) {
 
   // Parked cars sit along the road edges, ready to be borrowed.
   const parkedCars = [];
-  for (let k = 0; k < 26; k++) {
+  for (let k = 0; k < 30; k++) {
     const vertical = rng() < 0.5;
     let x, y, angle;
     if (vertical) {
@@ -72,8 +94,19 @@ export function createWorld(rng) {
     id: 'gold',
   };
 
+  // The pink Aurora GT for the finale — parked on the Boardwalk, worth five stars.
+  const auroraCar = {
+    x: 3090,
+    y: 1000,
+    angle: -Math.PI / 2,
+    color: '#ff8fc7',
+    parked: true,
+    aurora: true,
+    id: 'aurora',
+  };
+
   const traffic = [];
-  for (let k = 0; k < 22; k++) {
+  for (let k = 0; k < 30; k++) {
     const vertical = rng() < 0.5;
     if (vertical) {
       traffic.push({
@@ -99,7 +132,7 @@ export function createWorld(rng) {
   }
 
   const peds = [];
-  for (let k = 0; k < 26; k++) {
+  for (let k = 0; k < 40; k++) {
     const vertical = rng() < 0.5;
     let x, y;
     if (vertical) {
@@ -119,20 +152,46 @@ export function createWorld(rng) {
       speed: range(rng, 38, 68),
       down: 0,
       flee: 0,
+      beach: false,
       color: pick(rng, ['#e74c3c', '#3498db', '#f1c40f', '#ecf0f1', '#e67e22', '#9b59b6']),
     });
   }
+
+  // Beachgoers stroll the sand and never leave it.
+  for (let k = 0; k < 6; k++) {
+    const x = range(rng, SAND_X0 + 16, SAND_X1 - 12);
+    const y = range(rng, 200, WORLD_H - 200);
+    peds.push({
+      x,
+      y,
+      tx: x,
+      ty: y,
+      speed: range(rng, 26, 44),
+      down: 0,
+      flee: 0,
+      beach: true,
+      color: pick(rng, ['#ff9ff3', '#feca57', '#48dbfb', '#1dd1a1', '#ff6b6b', '#f368e0']),
+    });
+  }
+
+  const coast = coastDecor(rng);
 
   return {
     buildings,
     parks,
     parkedCars,
     targetCar,
+    auroraCar,
     traffic,
     peds,
     pickups: [],
     policeCars: [],
     footCops: [],
+    helicopters: [],
+    bullets: [],
+    courier: null,
+    palms: coast.palms,
+    umbrellas: coast.umbrellas,
   };
 }
 
@@ -145,6 +204,22 @@ export function circleHitsBuildings(buildings, x, y, r) {
     if (dx * dx + dy * dy < r * r) return true;
   }
   return false;
+}
+
+// The bay is deep water: no walking, no driving in it. The pier ends at its edge.
+export function circleHitsWater(x, y, r) {
+  for (const w of WATER_RECTS) {
+    const cx = Math.max(w.x, Math.min(x, w.x + w.w));
+    const cy = Math.max(w.y, Math.min(y, w.y + w.h));
+    const dx = x - cx;
+    const dy = y - cy;
+    if (dx * dx + dy * dy < r * r) return true;
+  }
+  return false;
+}
+
+export function pointInWater(x, y) {
+  return WATER_RECTS.some((w) => x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h);
 }
 
 export function trafficPos(t) {

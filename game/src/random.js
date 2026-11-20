@@ -26,6 +26,22 @@ export function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+export function clamp01(v) {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+export function lerp(a, b, t) {
+  return a + (b - a) * clamp01(t);
+}
+
+// Shortest-arc interpolation between two angles.
+export function angleLerp(a, b, t) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * clamp01(t);
+}
+
 export function dist(ax, ay, bx, by) {
   const dx = ax - bx;
   const dy = ay - by;

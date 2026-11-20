@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -17,9 +17,14 @@ mkdirSync(outDir, { recursive: true });
 cpSync(join(repoDir, 'game'), join(outDir, 'game'), { recursive: true });
 
 const screenshotsDir = join(repoDir, 'screenshots');
-if (existsSync(screenshotsDir)) {
-  cpSync(screenshotsDir, join(outDir, 'screenshots'), { recursive: true });
+if (!existsSync(screenshotsDir)) {
+  throw new Error('screenshots/ is missing — take the four dossier shots first');
 }
+const shotNames = readdirSync(screenshotsDir).filter((n) => !n.startsWith('.')).sort();
+if (shotNames.length < 3 || shotNames.length > 4) {
+  throw new Error(`screenshots/ must hold 3 or 4 images, found ${shotNames.length}`);
+}
+cpSync(screenshotsDir, join(outDir, 'screenshots'), { recursive: true });
 
 // buildDossier mengembalikan Uint8Array berisi dossier.json — tulis
 // byte-nya langsung, jangan di-stringify ulang.
@@ -31,3 +36,12 @@ const dossierBytes = buildDossier(outDir, {
   game_path_max_bytes: 1000,
 });
 writeFileSync(join(outDir, 'dossier.json'), dossierBytes);
+
+// Verifikasi: dossier tertulis dan ukurannya masuk batas gate.
+const dossierSize = statSync(join(outDir, 'dossier.json')).size;
+if (dossierSize > 1572864) {
+  throw new Error(`dossier.json is ${dossierSize} bytes, over the 1.5 MiB gate cap`);
+}
+console.log(
+  `Velvet Bay dossier: ${dossierSize} bytes, shots: ${shotNames.join(', ')} -> ${outDir}`
+);

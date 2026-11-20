@@ -1,1 +1,1 @@
-[{"name":"1-start.jpg","query":"?shot=start"},{"name":"2-play.jpg","query":"?shot=play"},{"name":"3-mission.jpg","query":"?shot=mission"},{"name":"4-end.jpg","query":"?shot=end"}]
+[{"name":"1-start.jpg","query":"?shot=start&tod=9.5"},{"name":"2-play.jpg","query":"?shot=play&tod=17.5"},{"name":"3-mission.jpg","query":"?shot=mission&tod=18.5"},{"name":"4-end.jpg","query":"?shot=end&tod=21"}]
