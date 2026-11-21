@@ -1,1 +1,20 @@
-[{"name":"1-start.jpg","query":"?shot=start"},{"name":"2-play.jpg","query":"?shot=play"},{"name":"3-mission.jpg","query":"?shot=mission"},{"name":"4-end.jpg","query":"?shot=end"}]
+[
+  {
+    "name": "1-start.jpg",
+    "query": "?shot=start"
+  },
+  {
+    "name": "2-play.jpg",
+    "query": "?shot=play"
+  },
+  {
+    "mission": "The Vault",
+    "name": "3-mission.jpg",
+    "note": "vault cracking at 18s of 30s, wanted 3, dusk over the bank",
+    "query": "?shot=mission"
+  },
+  {
+    "name": "4-end.jpg",
+    "query": "?shot=end"
+  }
+]

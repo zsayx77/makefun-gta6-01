@@ -126,6 +126,31 @@ export const MISSIONS = [
     timer: 0,
     carTarget: { x: 2400, y: 1160 },
   },
+  {
+    id: 10,
+    name: 'The Vault',
+    short: 'Crack the Bay National vault — hold the bank for 30 seconds, then run to Sunset Garage',
+    target: { x: 2650, y: 350 },
+    label: 'SUNSET GARAGE',
+    reward: 3000,
+    timer: 0,
+    bank: { x: 1000, y: 840, label: 'BAY NATIONAL BANK' },
+    holdSeconds: 30,
+    vaultCash: 500,
+  },
+];
+
+// The Vault (mission 10): hold the bank while the vault cracks, then run.
+// Three escape routes out of downtown — the north one is the fastest, so
+// Dax's crew weights it heaviest when picking the getaway.
+export const VAULT_HOLD_SECONDS = 30;
+export const VAULT_CASH = 500;
+export const VAULT_BANK = { x: 1000, y: 840, label: 'BAY NATIONAL BANK' };
+export const VAULT_GARAGE = { x: 2650, y: 350, label: 'SUNSET GARAGE' };
+export const VAULT_ESCAPE_ROUTES = [
+  { name: 'North Run', weight: 5, via: [{ x: 1000, y: 200 }, { x: 2600, y: 200 }] },
+  { name: 'West Run', weight: 3, via: [{ x: 200, y: 840 }, { x: 200, y: 200 }, { x: 2600, y: 200 }] },
+  { name: 'South Run', weight: 2, via: [{ x: 1000, y: 1800 }, { x: 2600, y: 1800 }] },
 ];
 
 export const PALETTE = {

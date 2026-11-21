@@ -22,6 +22,21 @@ export function pick(rng, arr) {
   return arr[Math.floor(rng() * arr.length)];
 }
 
+// Pick one entry by weight: entries look like { value, weight } or
+// { name, weight, ... }. Heavier entries are more likely; a weight of 0
+// never wins. Falls back to a uniform pick when the weights add to 0.
+export function weightedPick(rng, entries) {
+  let total = 0;
+  for (const e of entries) total += Math.max(0, e.weight || 0);
+  if (total <= 0) return pick(rng, entries);
+  let roll = rng() * total;
+  for (const e of entries) {
+    roll -= Math.max(0, e.weight || 0);
+    if (roll <= 0) return e;
+  }
+  return entries[entries.length - 1];
+}
+
 export function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }

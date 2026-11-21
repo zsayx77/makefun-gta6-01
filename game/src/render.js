@@ -1,5 +1,5 @@
 // All canvas drawing: city, cars, people, HUD, minimap, and full-screen states.
-import { VIEW_W, VIEW_H, WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_W, PALETTE, SAND_X, WATER_X, BOARDWALK_X } from './config.js';
+import { VIEW_W, VIEW_H, WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_W, PALETTE, SAND_X, WATER_X, BOARDWALK_X, VAULT_BANK, VAULT_GARAGE, VAULT_HOLD_SECONDS } from './config.js';
 import { clamp, dist } from './random.js';
 import { trafficPos } from './world.js';
 
@@ -416,6 +416,55 @@ function drawMinimap(ctx, g) {
     ctx.arc(mx + g.world.auroraCar.x * sx, my + g.world.auroraCar.y * sy, 3, 0, Math.PI * 2);
     ctx.fill();
   }
+  // Foot cops on patrol — smaller red dots than the cars.
+  for (const fc of g.world.footCops) {
+    ctx.fillStyle = '#ff6b6b';
+    ctx.beginPath();
+    ctx.arc(mx + fc.x * sx, my + fc.y * sy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // The Vault: the bank shows as a gold vault door while the heist runs.
+  const vm = g.currentMission();
+  if (vm && vm.id === 10) {
+    const pulse = 4 + Math.sin(g.time * 5) * 1.5;
+    ctx.fillStyle = '#f5c518';
+    ctx.fillRect(mx + VAULT_BANK.x * sx - pulse / 2, my + VAULT_BANK.y * sy - pulse / 2, pulse, pulse);
+    // Once the cash is grabbed, the crew's escape route draws dashed.
+    if (g.vaultStage === 'grabbed' && g.vaultRoute) {
+      ctx.strokeStyle = 'rgba(245,197,24,0.9)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(mx + VAULT_BANK.x * sx, my + VAULT_BANK.y * sy);
+      for (const wp of g.vaultRoute.via) ctx.lineTo(mx + wp.x * sx, my + wp.y * sy);
+      ctx.lineTo(mx + VAULT_GARAGE.x * sx, my + VAULT_GARAGE.y * sy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+  // Minimap legend, tucked under the map so new players can read it.
+  const legend = [
+    ['#ffffff', 'YOU'],
+    ['#ff2d2d', 'COPS'],
+    ['#f5c518', 'MISSION'],
+    ['#00d5e8', 'AURORA'],
+    ['#e67e22', 'COURIER'],
+  ];
+  ctx.fillStyle = 'rgba(8,12,18,0.78)';
+  rr(ctx, mx, my + mh + 6, mw, 22, 6);
+  ctx.fill();
+  ctx.font = 'bold 10px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  let lx = mx + 8;
+  for (const [color, label] of legend) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(lx + 3, my + mh + 17, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c8d0dc';
+    ctx.fillText(label, lx + 9, my + mh + 20);
+    lx += 9 + ctx.measureText(label).width + 10;
+  }
   ctx.fillStyle = '#fff';
   ctx.beginPath();
   ctx.arc(mx + g.player.x * sx, my + g.player.y * sy, 4, 0, Math.PI * 2);
@@ -495,6 +544,14 @@ function drawHUD(ctx, g) {
     if (m.id === 7) extra = `  —  ${Math.floor(g.tailTime)}s / 20s tailed`;
     if (m.id === 8) {
       extra = g.wanted >= 3 ? `  —  survive ${Math.ceil(g.getawayT)}s` : '  —  get to 3 stars to start the clock';
+    }
+    if (m.id === 10) {
+      if (g.vaultStage === 'go') extra = '  —  reach the bank';
+      else if (g.vaultStage === 'cracking') {
+        extra = `  —  vault ${Math.floor(g.vaultT)}s / ${VAULT_HOLD_SECONDS}s — stay inside the gold ring!`;
+      } else {
+        extra = `  —  escape to Sunset Garage via ${g.vaultRoute ? g.vaultRoute.name : 'the crew route'}`;
+      }
     }
     if (m.stops) extra = `  —  stop ${Math.min(g.stopIndex + 1, m.stops.length)} of ${m.stops.length}`;
     const marker = g.missionMarker();
@@ -685,6 +742,30 @@ export function drawGame(ctx, g) {
     }
   }
 
+  // The Vault: the bank gets a gold hold-ring, a label, and a cracking
+  // progress arc that fills as the vault opens.
+  if (mm && mm.id === 10 && g.state === 'playing') {
+    const bp = VAULT_BANK;
+    ctx.strokeStyle = 'rgba(245,197,24,0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(bp.x, bp.y, 110, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#f5c518';
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('BAY NATIONAL BANK', bp.x, bp.y - 122);
+    ctx.textAlign = 'left';
+    if (g.vaultStage === 'cracking') {
+      const frac = Math.min(1, g.vaultT / VAULT_HOLD_SECONDS);
+      ctx.strokeStyle = '#f5c518';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(bp.x, bp.y, 96, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
   // Player.
   const pl = g.player;
   if (pl.inCar && pl.car) {
@@ -773,7 +854,7 @@ export function drawGame(ctx, g) {
 
   if (g.state === 'title') {
     const saveLine = g.save
-      ? `Save found: $${g.save.cash} · mission ${Math.min(g.save.missionIndex + 1, 9)} of 9 — press ENTER to continue`
+      ? `Save found: $${g.save.cash} · mission ${Math.min(g.save.missionIndex + 1, 10)} of 10 — press ENTER to continue`
       : 'No save yet — a fresh start in Velvet Bay';
     overlay(
       ctx,
@@ -782,9 +863,9 @@ export function drawGame(ctx, g) {
         'S T R E E T   H E A T',
         '',
         'Dax Mercer just got out. The city owes him — and he plans to collect.',
-        'Steal cars, dodge the VCPD, and run nine jobs across Velvet Bay.',
+        'Steal cars, dodge the VCPD, and run ten jobs across Velvet Bay.',
         'Jobs: The Pickup · The Drop · Hot Wheels · Lose the Heat · The Gun Runner',
-        'Three Stashes · The Tail · The Getaway · King of the Bay',
+        'Three Stashes · The Tail · The Getaway · King of the Bay · The Vault',
         'Crew: Vex (heat fades faster) · Rook (faster car) · Mara (tougher Dax)',
         '',
         'WASD / arrows — move & drive      SHIFT — run      MOUSE — aim & fire',
@@ -804,7 +885,7 @@ export function drawGame(ctx, g) {
       [
         g.bustedReason || 'The VCPD caught up with you.',
         '',
-        `Cash kept: $${g.cash}  ·  Missions done: ${g.missionIndex} of 9`,
+        `Cash kept: $${g.cash}  ·  Missions done: ${g.missionIndex} of 10`,
         'The VCPD took a $100 cut for the trouble.',
       ],
       '#e74c3c',
@@ -815,7 +896,7 @@ export function drawGame(ctx, g) {
       ctx,
       'STORY COMPLETE',
       [
-        'Nine jobs. Zero witnesses that matter. Velvet Bay is yours, Dax.',
+        'Ten jobs. Zero witnesses that matter. Velvet Bay is yours, Dax.',
         'Vex · Rook · Mara — the crew that made it happen.',
         '',
         `Final cash: $${g.cash}`,

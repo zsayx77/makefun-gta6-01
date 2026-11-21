@@ -201,4 +201,22 @@ export class SoundEngine {
       o.stop(this.ctx.currentTime + 0.2);
     } catch (e) {}
   }
+
+  vaultAlarm() {
+    if (!this.ctx) return;
+    try {
+      // Two-tone bank alarm: a high square blip, then a low one.
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(1175, this.ctx.currentTime);
+      o.frequency.setValueAtTime(880, this.ctx.currentTime + 0.12);
+      g.gain.setValueAtTime(0.07, this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.3);
+      o.connect(g);
+      g.connect(this.master);
+      o.start();
+      o.stop(this.ctx.currentTime + 0.32);
+    } catch (e) {}
+  }
 }

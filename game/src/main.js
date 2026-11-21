@@ -23,8 +23,13 @@ import {
   HELI_HP,
   SAND_X,
   WATER_X,
+  VAULT_HOLD_SECONDS,
+  VAULT_CASH,
+  VAULT_BANK,
+  VAULT_GARAGE,
+  VAULT_ESCAPE_ROUTES,
 } from './config.js';
-import { mulberry32, clamp, dist, angleTo, turnToward, range } from './random.js';
+import { mulberry32, clamp, dist, angleTo, turnToward, range, weightedPick } from './random.js';
 import { Input } from './input.js';
 import { SoundEngine } from './audio.js';
 import { createWorld, circleHitsBuildings, trafficPos, inWater } from './world.js';
@@ -75,6 +80,14 @@ export class Game {
     this.muzzleT = 0;
     this.mouseWorld = { x: PLAYER_START.x, y: PLAYER_START.y };
     this.crew = CREW;
+    // Round-7 systems: the vault heist (mission 10). vaultStage runs
+    // 'go' -> 'cracking' -> 'grabbed'; vaultRoute is the getaway the crew
+    // picked, vaultHeat tracks how many alarm stars the crack has raised.
+    this.vaultStage = 'go';
+    this.vaultT = 0;
+    this.vaultHeat = 0;
+    this.vaultRoute = null;
+    this.vaultAlarmT = 0;
     this.save = this.loadSave();
     if (this.save) {
       this.cash = this.save.cash || 0;
@@ -133,6 +146,15 @@ export class Game {
     this.getawayT = 0;
     if (m.id === 7) this.resetCourier();
     if (m.id === 8) this.getawayT = 120;
+    if (m.id === 10) {
+      // Fresh vault, fresh getaway: the crew weights the north run
+      // heaviest, but any of the three routes can come up.
+      this.vaultStage = 'go';
+      this.vaultT = 0;
+      this.vaultHeat = 0;
+      this.vaultAlarmT = 0;
+      this.vaultRoute = weightedPick(this.rng, VAULT_ESCAPE_ROUTES);
+    }
   }
 
   resetCourier() {
@@ -299,6 +321,14 @@ export class Game {
       if (a.parked) return { x: a.x, y: a.y, label: 'AURORA GT' };
       return { x: m.target.x, y: m.target.y, label: m.label };
     }
+    if (m.id === 10) {
+      // Before the crack the bank is the target; once the cash is grabbed
+      // the marker swings to the Sunset Garage escape.
+      if (this.vaultStage === 'grabbed') {
+        return { x: VAULT_GARAGE.x, y: VAULT_GARAGE.y, label: VAULT_GARAGE.label };
+      }
+      return { x: VAULT_BANK.x, y: VAULT_BANK.y, label: VAULT_BANK.label };
+    }
     if (m.stops) {
       const stop = m.stops[this.stopIndex];
       if (!stop) return null;
@@ -329,6 +359,9 @@ export class Game {
     }
     if (next.id === 5) {
       this.addFlash('New hardware: the pistol is yours now — aim with the mouse', 3.5);
+    }
+    if (next.id === 10) {
+      this.addFlash('Final job: crack the Bay National vault — hold the bank, then run!', 4);
     }
     this.saveGame();
   }
@@ -386,6 +419,9 @@ export class Game {
       bullets: this.world.bullets.length,
       tailTime: Math.round(this.tailTime * 10) / 10,
       getawayT: Math.round(this.getawayT * 10) / 10,
+      vaultStage: this.vaultStage,
+      vaultT: Math.round(this.vaultT * 10) / 10,
+      vaultRoute: this.vaultRoute ? this.vaultRoute.name : null,
     };
   }
 
@@ -565,6 +601,55 @@ export class Game {
           dist(this.player.x, this.player.y, m.target.x, m.target.y) < 80
         ) {
           this.completeMission();
+        }
+      } else if (m.id === 10) {
+        // The Vault: reach the bank, hold it while the vault cracks, grab
+        // the cash, then run to the Sunset Garage on the crew's route.
+        const bankD = dist(this.player.x, this.player.y, VAULT_BANK.x, VAULT_BANK.y);
+        if (this.vaultStage === 'go') {
+          if (bankD < 90) {
+            this.vaultStage = 'cracking';
+            this.vaultT = 0;
+            this.vaultHeat = 0;
+            this.vaultAlarmT = 0;
+            this.commitCrime(1);
+            this.addFlash('The vault is opening — hold the bank!', 3.5);
+            this.sound.vaultAlarm();
+          }
+        } else if (this.vaultStage === 'cracking') {
+          if (bankD < 110) {
+            this.vaultT += dt;
+            this.vaultAlarmT += dt;
+            if (this.vaultAlarmT >= 5) {
+              this.vaultAlarmT = 0;
+              this.sound.vaultAlarm();
+            }
+            // Every ten seconds of cracking, the alarm pulls one more star.
+            const heat = Math.min(4, Math.floor(this.vaultT / 10));
+            if (heat > this.vaultHeat) {
+              this.vaultHeat = heat;
+              this.commitCrime(1);
+              this.addFlash(`Vault alarm — wanted level ${this.wanted}!`, 2.5);
+            }
+            if (this.vaultT >= VAULT_HOLD_SECONDS) {
+              this.vaultStage = 'grabbed';
+              this.cash += VAULT_CASH;
+              const route = this.vaultRoute ? this.vaultRoute.name : 'the north run';
+              this.addFlash(`Vault cracked — +$${VAULT_CASH}! Escape via ${route} to Sunset Garage!`, 4);
+              this.sound.blip(1560, 0.2);
+            }
+          } else {
+            // Stepping out of the bank floor lets the vault re-lock a little.
+            this.vaultT = Math.max(0, this.vaultT - dt * 2);
+            if (this.vaultT <= 0 && this.vaultStage === 'cracking') {
+              this.vaultStage = 'go';
+              this.addFlash('You left the bank — the vault re-locked. Get back in!', 3);
+            }
+          }
+        } else if (this.vaultStage === 'grabbed') {
+          if (dist(this.player.x, this.player.y, VAULT_GARAGE.x, VAULT_GARAGE.y) < 80) {
+            this.completeMission();
+          }
         }
       } else if (m.target && dist(this.player.x, this.player.y, m.target.x, m.target.y) < 75) {
         this.completeMission();
