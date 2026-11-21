@@ -1,5 +1,5 @@
 // All canvas drawing: city, cars, people, HUD, minimap, and full-screen states.
-import { VIEW_W, VIEW_H, WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_W, PALETTE } from './config.js';
+import { VIEW_W, VIEW_H, WORLD_W, WORLD_H, ROADS_V, ROADS_H, ROAD_W, PALETTE, SAND_X, WATER_X, BOARDWALK_X } from './config.js';
 import { clamp, dist } from './random.js';
 import { trafficPos } from './world.js';
 
@@ -102,6 +102,72 @@ function drawPed(ctx, x, y, color, down, angle) {
   ctx.restore();
 }
 
+function drawHeli(ctx, h, px, py) {
+  // Searchlight cone sweeping down toward the player.
+  const a = Math.atan2(py - h.y, px - h.x);
+  const bobY = Math.sin(h.bob) * 6;
+  const grad = ctx.createLinearGradient(h.x, h.y + bobY, px, py);
+  grad.addColorStop(0, 'rgba(255,240,170,0.30)');
+  grad.addColorStop(1, 'rgba(255,240,170,0.02)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(h.x, h.y + bobY);
+  const spread = 0.22;
+  ctx.lineTo(px + Math.cos(a + spread) * 60, py + Math.sin(a + spread) * 60);
+  ctx.lineTo(px + Math.cos(a - spread) * 60, py + Math.sin(a - spread) * 60);
+  ctx.closePath();
+  ctx.fill();
+  // Body, tail, and spinning rotor.
+  ctx.save();
+  ctx.translate(h.x, h.y + bobY);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(2, 4, 26, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1d2b3a';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 24, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#9fc4e8';
+  ctx.beginPath();
+  ctx.ellipse(10, -2, 9, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1d2b3a';
+  ctx.fillRect(-34, -3, 14, 6);
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.lineWidth = 3;
+  const ra = h.rotor;
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(ra) * 34, Math.sin(ra) * 34);
+  ctx.lineTo(-Math.cos(ra) * 34, -Math.sin(ra) * 34);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(ra + Math.PI / 2) * 34, Math.sin(ra + Math.PI / 2) * 34);
+  ctx.lineTo(-Math.cos(ra + Math.PI / 2) * 34, -Math.sin(ra + Math.PI / 2) * 34);
+  ctx.stroke();
+  // HP pips.
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = i < h.hp ? '#e74c3c' : '#555';
+    ctx.fillRect(-14 + i * 10, -22, 8, 4);
+  }
+  ctx.restore();
+}
+
+function drawHeadlights(ctx, x, y, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = 'rgba(255,230,150,0.10)';
+  ctx.beginPath();
+  ctx.moveTo(24, -8);
+  ctx.lineTo(190, -52);
+  ctx.lineTo(190, 52);
+  ctx.lineTo(24, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawCity(ctx, g) {
   const w = g.world;
   ctx.fillStyle = PALETTE.grass;
@@ -122,6 +188,72 @@ function drawCity(ctx, g) {
     ctx.fillRect(x - ROAD_W / 2 - 8, 0, 8, WORLD_H);
     ctx.fillRect(x + ROAD_W / 2, 0, 8, WORLD_H);
   }
+
+  // The bay: sand strip, boardwalk, open water with animated foam, a pier,
+  // palms and umbrellas along the east edge.
+  ctx.fillStyle = PALETTE.sand;
+  ctx.fillRect(SAND_X, 0, WATER_X - SAND_X, WORLD_H);
+  ctx.fillStyle = PALETTE.boardwalk;
+  ctx.fillRect(BOARDWALK_X - 14, 0, 28, WORLD_H);
+  ctx.fillStyle = '#a07d46';
+  for (let y = 0; y < WORLD_H; y += 46) ctx.fillRect(BOARDWALK_X - 14, y, 28, 3);
+  ctx.fillStyle = PALETTE.waterDeep;
+  ctx.fillRect(WATER_X, 0, WORLD_W - WATER_X, WORLD_H);
+  ctx.fillStyle = PALETTE.water;
+  ctx.fillRect(WATER_X, 0, 26, WORLD_H);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  for (let y = 0; y < WORLD_H; y += 26) {
+    const wob = Math.sin(y * 0.02 + g.time * 1.6) * 7;
+    ctx.fillRect(WATER_X - 4 + wob, y, 10, 5);
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 2;
+  for (let k = 0; k < 4; k++) {
+    const wx = WATER_X + 34 + k * 14 + Math.sin(g.time * 0.9 + k * 1.7) * 5;
+    ctx.beginPath();
+    for (let y = 0; y <= WORLD_H; y += 48) {
+      const xx = wx + Math.sin(y * 0.03 + g.time * 1.2 + k) * 6;
+      if (y === 0) ctx.moveTo(xx, y);
+      else ctx.lineTo(xx, y);
+    }
+    ctx.stroke();
+  }
+  // Beach pier at the harbor end of the bay.
+  ctx.fillStyle = PALETTE.boardwalk;
+  ctx.fillRect(BOARDWALK_X - 14, 1900, WATER_X - BOARDWALK_X + 14, 40);
+  ctx.fillStyle = '#a07d46';
+  for (let x = BOARDWALK_X - 10; x < WATER_X; x += 18) ctx.fillRect(x, 1900, 10, 40);
+  // Palms and umbrellas dotted along the sand.
+  for (let i = 0; i < 9; i++) {
+    const px = SAND_X + 18 + ((i * 37) % 56);
+    const py = 180 + i * 240 + ((i * 53) % 90);
+    ctx.strokeStyle = '#7a5a2e';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + 6, py - 26);
+    ctx.stroke();
+    ctx.fillStyle = '#2f7d32';
+    for (let f = 0; f < 5; f++) {
+      const fa = (f / 5) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.ellipse(px + 6 + Math.cos(fa) * 12, py - 26 + Math.sin(fa) * 7, 13, 5, fa, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const ux = px + 34;
+    const uy = py + 40;
+    ctx.fillStyle = ['#ff6b9d', '#ffd93d', '#6bcbff'][i % 3];
+    ctx.beginPath();
+    ctx.arc(ux, uy, 15, Math.PI, 0);
+    ctx.fill();
+    ctx.strokeStyle = '#5a4a2e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ux, uy);
+    ctx.lineTo(ux, uy - 16);
+    ctx.stroke();
+  }
+  ctx.fillStyle = PALETTE.sidewalk;
   for (const y of ROADS_H) {
     ctx.fillRect(0, y - ROAD_W / 2 - 8, WORLD_W, 8);
     ctx.fillRect(0, y + ROAD_W / 2, WORLD_W, 8);
@@ -162,6 +294,35 @@ function drawCity(ctx, g) {
       for (let r = 0; r < rows; r++) {
         if ((c * 3 + r * 7 + b.windows) % 4 === 0) continue;
         ctx.fillRect(b.x + 14 + c * 46, b.y + 14 + r * 46, 12, 12);
+      }
+    }
+  }
+
+  // After dark, more windows glow and the streetlamps come on.
+  const phase = g.dayPhase();
+  if (phase.night > 0.15) {
+    for (const b of w.buildings) {
+      const cols = Math.max(1, Math.floor(b.w / 46));
+      const rows = Math.max(1, Math.floor(b.h / 46));
+      ctx.fillStyle = `rgba(255,214,120,${0.55 * phase.night})`;
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          if ((c * 5 + r * 3 + b.windows) % 3 !== 0) continue;
+          ctx.fillRect(b.x + 14 + c * 46, b.y + 14 + r * 46, 12, 12);
+        }
+      }
+    }
+    ctx.fillStyle = `rgba(255,220,140,${0.1 * phase.night})`;
+    for (const x of ROADS_V) {
+      for (const y of ROADS_H) {
+        ctx.beginPath();
+        ctx.arc(x + 40, y - 40, 42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255,230,160,${0.85 * phase.night})`;
+        ctx.beginPath();
+        ctx.arc(x + 40, y - 40, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255,220,140,${0.1 * phase.night})`;
       }
     }
   }
@@ -215,6 +376,11 @@ function drawMinimap(ctx, g) {
     ctx.lineTo(mx + mw, my + y * sy);
     ctx.stroke();
   }
+  // The bay on the minimap.
+  ctx.fillStyle = '#c2a878';
+  ctx.fillRect(mx + SAND_X * sx, my, (WATER_X - SAND_X) * sx, mh);
+  ctx.fillStyle = '#1b5f7a';
+  ctx.fillRect(mx + WATER_X * sx, my, (WORLD_W - WATER_X) * sx, mh);
   const marker = g.missionMarker();
   if (marker) {
     const pulse = 4 + Math.sin(g.time * 5) * 1.5;
@@ -231,6 +397,23 @@ function drawMinimap(ctx, g) {
     ctx.fillStyle = '#ff2d2d';
     ctx.beginPath();
     ctx.arc(mx + pc.x * sx, my + pc.y * sy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (const h of g.world.helicopters) {
+    ctx.fillStyle = '#ff2d2d';
+    ctx.beginPath();
+    ctx.arc(mx + h.x * sx, my + h.y * sy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const cour = g.world.courier;
+  ctx.fillStyle = '#e67e22';
+  ctx.beginPath();
+  ctx.arc(mx + cour.x * sx, my + cour.y * sy, 3, 0, Math.PI * 2);
+  ctx.fill();
+  if (g.world.auroraCar.parked) {
+    ctx.fillStyle = '#00d5e8';
+    ctx.beginPath();
+    ctx.arc(mx + g.world.auroraCar.x * sx, my + g.world.auroraCar.y * sy, 3, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.fillStyle = '#fff';
@@ -280,6 +463,19 @@ function drawHUD(ctx, g) {
   ctx.font = '12px system-ui, sans-serif';
   ctx.fillText(g.wanted === 0 ? 'CLEAN' : `WANTED LV ${g.wanted}`, 150, 100);
 
+  // Clock + crew strip.
+  const phase = g.dayPhase();
+  ctx.fillStyle = 'rgba(8,12,18,0.78)';
+  rr(ctx, 16, 124, 320, 30, 8);
+  ctx.fill();
+  ctx.fillStyle = '#ffe9a8';
+  ctx.font = 'bold 14px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${g.clockText()} · ${phase.name}`, 28, 144);
+  ctx.fillStyle = '#c8d0dc';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.fillText('CREW  VEX · ROOK · MARA', 158, 144);
+
   drawMinimap(ctx, g);
 
   // Mission panel.
@@ -296,8 +492,14 @@ function drawHUD(ctx, g) {
     ctx.font = '13px system-ui, sans-serif';
     let extra = '';
     if (m.id === 2 && g.missionTimer > 0) extra = `  —  ${Math.ceil(g.missionTimer)}s left`;
-    if (m.target) {
-      const d = Math.round(dist(g.player.x, g.player.y, g.missionMarker().x, g.missionMarker().y) / 10);
+    if (m.id === 7) extra = `  —  ${Math.floor(g.tailTime)}s / 20s tailed`;
+    if (m.id === 8) {
+      extra = g.wanted >= 3 ? `  —  survive ${Math.ceil(g.getawayT)}s` : '  —  get to 3 stars to start the clock';
+    }
+    if (m.stops) extra = `  —  stop ${Math.min(g.stopIndex + 1, m.stops.length)} of ${m.stops.length}`;
+    const marker = g.missionMarker();
+    if (marker) {
+      const d = Math.round(dist(g.player.x, g.player.y, marker.x, marker.y) / 10);
       extra += `  —  ${d}m`;
     }
     ctx.fillText(m.short + extra, VIEW_W / 2, VIEW_H - 32);
@@ -321,12 +523,18 @@ function drawHUD(ctx, g) {
   }
   ctx.fillStyle = '#c8d0dc';
   ctx.font = '12px system-ui, sans-serif';
-  ctx.fillText(g.player.inCar ? 'DRIVING' : 'WASD MOVE · SHIFT RUN', 30, VIEW_H - 24);
+  ctx.fillText(g.player.inCar ? 'DRIVING' : g.isArmed() ? 'ON FOOT · MOUSE TO AIM' : 'WASD MOVE · SHIFT RUN', 30, VIEW_H - 24);
 
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(200,208,220,0.85)';
   ctx.font = '12px system-ui, sans-serif';
-  ctx.fillText('WASD move · E steal / exit car · SPACE punch · P pause', VIEW_W - 16, VIEW_H - 84);
+  ctx.fillText(
+    g.isArmed()
+      ? 'WASD move · E steal / exit car · SPACE punch · MOUSE aim + fire · P pause'
+      : 'WASD move · E steal / exit car · SPACE punch · P pause',
+    VIEW_W - 16,
+    VIEW_H - 84
+  );
 
   // Flash message.
   if (g.flash.ttl > 0) {
@@ -430,6 +638,53 @@ export function drawGame(ctx, g) {
   for (const pc of w.policeCars) drawCar(ctx, pc.x, pc.y, pc.angle, '#14181d', { police: true, time: g.time });
   for (const fc of w.footCops) drawPed(ctx, fc.x, fc.y, '#2c4a7c', 0, Math.atan2(g.player.y - fc.y, g.player.x - fc.x));
 
+  // The Aurora GT, parked and waiting for the finale.
+  if (w.auroraCar.parked) {
+    const pulse = 30 + Math.sin(g.time * 4) * 5;
+    ctx.strokeStyle = 'rgba(0,213,232,0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(w.auroraCar.x, w.auroraCar.y, pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    drawCar(ctx, w.auroraCar.x, w.auroraCar.y, w.auroraCar.angle, w.auroraCar.color, {});
+  }
+
+  // The courier for the tail job, briefcase in hand.
+  const cour = w.courier;
+  drawPed(ctx, cour.x, cour.y, '#e67e22', 0, cour.angle);
+  ctx.fillStyle = '#7a4a12';
+  ctx.fillRect(cour.x - 4, cour.y - 14, 8, 6);
+
+  // Beachgoers on the sand.
+  for (const b of w.beachgoers) {
+    drawPed(ctx, b.x, b.y, b.color, b.down, Math.atan2(b.ty - b.y, b.tx - b.x));
+  }
+
+  // Helicopters with their searchlights.
+  for (const h of w.helicopters) drawHeli(ctx, h, g.player.x, g.player.y);
+
+  // Bullets: bright tracers.
+  ctx.strokeStyle = '#ffe9a8';
+  ctx.lineWidth = 3;
+  for (const b of w.bullets) {
+    ctx.beginPath();
+    ctx.moveTo(b.x - b.vx * 0.02, b.y - b.vy * 0.02);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  // Current stop crate for multi-stop missions.
+  const mm = g.currentMission();
+  if (mm && mm.stops) {
+    const stop = mm.stops[g.stopIndex];
+    if (stop) {
+      ctx.fillStyle = '#f5c518';
+      ctx.fillRect(stop.x - 10, stop.y - 10, 20, 20);
+      ctx.fillStyle = '#7a5a00';
+      ctx.fillRect(stop.x - 10, stop.y - 2, 20, 4);
+    }
+  }
+
   // Player.
   const pl = g.player;
   if (pl.inCar && pl.car) {
@@ -457,17 +712,68 @@ export function drawGame(ctx, g) {
       ctx.fillStyle = '#ffe9a8';
       ctx.font = 'bold 14px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(near.gold ? 'E — STEAL COMET GT' : 'E — STEAL CAR', pl.x, pl.y - 33);
+      ctx.fillText(near.gold ? 'E — STEAL COMET GT' : near.aurora ? 'E — STEAL AURORA GT' : 'E — STEAL CAR', pl.x, pl.y - 33);
       ctx.textAlign = 'left';
     }
+    // Muzzle flash toward the aim point.
+    if (g.muzzleT > 0) {
+      const aim = Math.atan2(g.mouseWorld.y - pl.y, g.mouseWorld.x - pl.x);
+      ctx.fillStyle = 'rgba(255,240,170,0.9)';
+      ctx.beginPath();
+      ctx.arc(pl.x + Math.cos(aim) * 26, pl.y + Math.sin(aim) * 26, 9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Aim reticle at the mouse while the pistol is out.
+    if (g.isArmed() && g.state === 'playing') {
+      const mx = g.mouseWorld.x;
+      const my = g.mouseWorld.y;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mx, my, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(mx - 14, my);
+      ctx.lineTo(mx - 6, my);
+      ctx.moveTo(mx + 6, my);
+      ctx.lineTo(mx + 14, my);
+      ctx.moveTo(mx, my - 14);
+      ctx.lineTo(mx, my - 6);
+      ctx.moveTo(mx, my + 6);
+      ctx.lineTo(mx, my + 14);
+      ctx.stroke();
+    }
+  }
+
+  // Headlight cones after dark.
+  const nightNow = g.dayPhase().night;
+  if (nightNow > 0.15) {
+    if (pl.inCar && pl.car) drawHeadlights(ctx, pl.car.x, pl.car.y, pl.car.angle);
+    for (const t of w.traffic) {
+      const tp = trafficPos(t);
+      drawHeadlights(ctx, tp.x, tp.y, tp.angle);
+    }
+    for (const pc of w.policeCars) drawHeadlights(ctx, pc.x, pc.y, pc.angle);
   }
   ctx.restore();
+
+  // Day/night tint over the whole view.
+  const phase = g.dayPhase();
+  let tint = null;
+  if (phase.name === 'DAWN') tint = 'rgba(255,170,90,0.08)';
+  else if (phase.name === 'GOLDEN HOUR') tint = 'rgba(255,140,60,0.14)';
+  else if (phase.name === 'DUSK') tint = 'rgba(80,60,140,0.18)';
+  else if (phase.name === 'NIGHT') tint = 'rgba(8,10,40,0.38)';
+  if (tint) {
+    ctx.fillStyle = tint;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  }
 
   drawHUD(ctx, g);
 
   if (g.state === 'title') {
     const saveLine = g.save
-      ? `Save found: $${g.save.cash} · mission ${Math.min(g.save.missionIndex + 1, 4)} of 4 — press ENTER to continue`
+      ? `Save found: $${g.save.cash} · mission ${Math.min(g.save.missionIndex + 1, 9)} of 9 — press ENTER to continue`
       : 'No save yet — a fresh start in Velvet Bay';
     overlay(
       ctx,
@@ -476,9 +782,12 @@ export function drawGame(ctx, g) {
         'S T R E E T   H E A T',
         '',
         'Dax Mercer just got out. The city owes him — and he plans to collect.',
-        'Steal cars, dodge the VCPD, and run four jobs across Velvet Bay.',
+        'Steal cars, dodge the VCPD, and run nine jobs across Velvet Bay.',
+        'Jobs: The Pickup · The Drop · Hot Wheels · Lose the Heat · The Gun Runner',
+        'Three Stashes · The Tail · The Getaway · King of the Bay',
+        'Crew: Vex (heat fades faster) · Rook (faster car) · Mara (tougher Dax)',
         '',
-        'WASD / arrows — move & drive      SHIFT — run',
+        'WASD / arrows — move & drive      SHIFT — run      MOUSE — aim & fire',
         'E — steal / exit a car      SPACE — punch      P — pause',
         '',
         saveLine,
@@ -495,7 +804,7 @@ export function drawGame(ctx, g) {
       [
         g.bustedReason || 'The VCPD caught up with you.',
         '',
-        `Cash kept: $${g.cash}  ·  Missions done: ${g.missionIndex} of 4`,
+        `Cash kept: $${g.cash}  ·  Missions done: ${g.missionIndex} of 9`,
         'The VCPD took a $100 cut for the trouble.',
       ],
       '#e74c3c',
@@ -506,7 +815,8 @@ export function drawGame(ctx, g) {
       ctx,
       'STORY COMPLETE',
       [
-        'Four jobs. Zero witnesses that matter. Velvet Bay is yours, Dax.',
+        'Nine jobs. Zero witnesses that matter. Velvet Bay is yours, Dax.',
+        'Vex · Rook · Mara — the crew that made it happen.',
         '',
         `Final cash: $${g.cash}`,
       ],

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -31,3 +31,17 @@ const dossierBytes = buildDossier(outDir, {
   game_path_max_bytes: 1000,
 });
 writeFileSync(join(outDir, 'dossier.json'), dossierBytes);
+
+// Laporkan ukuran dossier dan jumlah screenshot agar build lokal gampang dicek.
+const shotFiles = existsSync(screenshotsDir)
+  ? readdirSync(screenshotsDir).filter((f) => f.endsWith('.jpg'))
+  : [];
+console.log(`dossier.json: ${dossierBytes.length} bytes, screenshots: ${shotFiles.length} (${shotFiles.join(', ')})`);
+
+// Fail loudly if a dossier shot is missing or empty — a broken shot list
+// must never reach the grader.
+for (const name of ['1-start.jpg', '2-play.jpg', '3-mission.jpg', '4-end.jpg']) {
+  const p = join(screenshotsDir, name);
+  if (!existsSync(p)) throw new Error(`missing dossier screenshot: ${name}`);
+  if (statSync(p).size === 0) throw new Error(`empty dossier screenshot: ${name}`);
+}

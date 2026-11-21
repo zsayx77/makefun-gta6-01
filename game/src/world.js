@@ -1,6 +1,6 @@
 // Velvet Bay city generation: road grid, building blocks, parks, parked cars,
 // traffic, pedestrians. Everything comes from the seeded RNG in config.
-import { ROADS_V, ROADS_H, ROAD_W, WORLD_W, WORLD_H, PALETTE } from './config.js';
+import { ROADS_V, ROADS_H, ROAD_W, WORLD_W, WORLD_H, PALETTE, SAND_X, WATER_X } from './config.js';
 import { range, int, pick } from './random.js';
 
 export function createWorld(rng) {
@@ -42,7 +42,7 @@ export function createWorld(rng) {
 
   // Parked cars sit along the road edges, ready to be borrowed.
   const parkedCars = [];
-  for (let k = 0; k < 26; k++) {
+  for (let k = 0; k < 30; k++) {
     const vertical = rng() < 0.5;
     let x, y, angle;
     if (vertical) {
@@ -72,8 +72,19 @@ export function createWorld(rng) {
     id: 'gold',
   };
 
+  // The Aurora GT for the finale — parked on 12th, east side of town.
+  const auroraCar = {
+    x: 2400,
+    y: 1160,
+    angle: 0,
+    color: '#00d5e8',
+    parked: true,
+    aurora: true,
+    id: 'aurora',
+  };
+
   const traffic = [];
-  for (let k = 0; k < 22; k++) {
+  for (let k = 0; k < 30; k++) {
     const vertical = rng() < 0.5;
     if (vertical) {
       traffic.push({
@@ -99,7 +110,7 @@ export function createWorld(rng) {
   }
 
   const peds = [];
-  for (let k = 0; k < 26; k++) {
+  for (let k = 0; k < 40; k++) {
     const vertical = rng() < 0.5;
     let x, y;
     if (vertical) {
@@ -123,16 +134,50 @@ export function createWorld(rng) {
     });
   }
 
+  // Beachgoers stroll the sand strip between the boardwalk and the water.
+  const beachgoers = [];
+  for (let k = 0; k < 10; k++) {
+    const x = range(rng, SAND_X + 14, WATER_X - 16);
+    const y = range(rng, 120, WORLD_H - 120);
+    beachgoers.push({
+      x,
+      y,
+      tx: x,
+      ty: y,
+      speed: range(rng, 26, 48),
+      down: 0,
+      flee: 0,
+      color: pick(rng, ['#ff6b9d', '#ffd93d', '#6bcbff', '#ff9f43', '#a29bfe']),
+      beach: true,
+    });
+  }
+
+  // The courier for the tail job — placed on a road, repositioned when the
+  // mission starts. Walks slowly so a tail can keep up without spooking him.
+  const courier = {
+    x: 1400,
+    y: 840,
+    tx: 1400,
+    ty: 840,
+    speed: 55,
+    angle: 0,
+  };
+
   return {
     buildings,
     parks,
     parkedCars,
     targetCar,
+    auroraCar,
     traffic,
     peds,
+    beachgoers,
+    courier,
     pickups: [],
     policeCars: [],
     footCops: [],
+    helicopters: [],
+    bullets: [],
   };
 }
 
@@ -145,6 +190,16 @@ export function circleHitsBuildings(buildings, x, y, r) {
     if (dx * dx + dy * dy < r * r) return true;
   }
   return false;
+}
+
+// The bay: open water east of WATER_X. A circle overlaps it when its
+// eastern edge crosses the shoreline.
+export function inWater(x, y, r) {
+  return x + r > WATER_X;
+}
+
+export function onSand(x, y) {
+  return x > SAND_X && x <= WATER_X;
 }
 
 export function trafficPos(t) {

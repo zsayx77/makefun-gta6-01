@@ -17,11 +17,17 @@ import {
   CAR_MAX_SPEED,
   CAR_REVERSE_MAX,
   MISSIONS,
+  CREW,
+  PISTOL_UNLOCK_MISSIONS,
+  HELI_REWARD,
+  HELI_HP,
+  SAND_X,
+  WATER_X,
 } from './config.js';
 import { mulberry32, clamp, dist, angleTo, turnToward, range } from './random.js';
 import { Input } from './input.js';
 import { SoundEngine } from './audio.js';
-import { createWorld, circleHitsBuildings, trafficPos } from './world.js';
+import { createWorld, circleHitsBuildings, trafficPos, inWater } from './world.js';
 import { drawGame } from './render.js';
 import { applyShot } from './shots.js';
 
@@ -57,19 +63,102 @@ export class Game {
     this.policeSpawnT = 0;
     this.copSpawnT = 0;
     this.ramCd = 0;
+    // Round-6 systems: day clock, multi-stop missions, tail + getaway state,
+    // helicopters, pistol fire, and the crew.
+    this.dayTime = 9.0;
+    this.stopIndex = 0;
+    this.tailTime = 0;
+    this.tailSpookCd = 0;
+    this.getawayT = 0;
+    this.heliSpawnT = 0;
+    this.fireCd = 0;
+    this.muzzleT = 0;
+    this.mouseWorld = { x: PLAYER_START.x, y: PLAYER_START.y };
+    this.crew = CREW;
     this.save = this.loadSave();
     if (this.save) {
       this.cash = this.save.cash || 0;
-      this.missionIndex = clamp(this.save.missionIndex || 0, 0, MISSIONS.length - 1);
+      this.missionIndex = clamp(this.save.missionIndex || 0, 0, MISSIONS.length);
     }
     const m = this.currentMission();
     this.missionTimer = m ? m.timer || 0 : 0;
+    this.startMission(m);
     this.centerCamera();
     window.__game = this;
   }
 
   currentMission() {
     return this.missionIndex < MISSIONS.length ? MISSIONS[this.missionIndex] : null;
+  }
+
+  // The crew rides with Dax from the start; each member's bonus is always on.
+  hasCrew(name) {
+    return this.crew.some((c) => c.name === name);
+  }
+
+  isArmed() {
+    return this.missionIndex >= PISTOL_UNLOCK_MISSIONS;
+  }
+
+  // Clock phase for the day/night tint: name + darkness 0..1.
+  dayPhase() {
+    const h = this.dayTime;
+    if (h >= 5 && h < 7) return { name: 'DAWN', night: 0.25 };
+    if (h >= 7 && h < 17) return { name: 'DAY', night: 0 };
+    if (h >= 17 && h < 19) return { name: 'GOLDEN HOUR', night: 0.15 };
+    if (h >= 19 && h < 21) return { name: 'DUSK', night: 0.45 };
+    return { name: 'NIGHT', night: 1 };
+  }
+
+  clockText() {
+    const h = Math.floor(this.dayTime);
+    const m = Math.floor((this.dayTime - h) * 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  // A helicopter spotlight is on the player when a heli is close overhead.
+  heliSpotlightOn() {
+    for (const h of this.world.helicopters) {
+      if (dist(h.x, h.y, this.player.x, this.player.y) < 900) return true;
+    }
+    return false;
+  }
+
+  // Set up the per-mission state when a mission begins.
+  startMission(m) {
+    if (!m) return;
+    this.stopIndex = 0;
+    this.tailTime = 0;
+    this.tailSpookCd = 0;
+    this.getawayT = 0;
+    if (m.id === 7) this.resetCourier();
+    if (m.id === 8) this.getawayT = 120;
+  }
+
+  resetCourier() {
+    const c = this.world.courier;
+    // Put the courier on the sidewalk of the vertical road nearest to a
+    // point a short way east of the player.
+    const wantX = this.player.x + 300;
+    let road = ROADS_V[0];
+    for (const r of ROADS_V) {
+      if (Math.abs(r - wantX) < Math.abs(road - wantX)) road = r;
+    }
+    c.x = road + ROAD_W / 2 + 12;
+    c.y = clamp(this.player.y, 120, WORLD_H - 120);
+    c.tx = c.x;
+    c.ty = c.y;
+    c.angle = 0;
+  }
+
+  updateMouseWorld() {
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = this.canvas.width / Math.max(1, rect.width);
+    const sy = this.canvas.height / Math.max(1, rect.height);
+    this.mouseWorld = {
+      x: this.cam.x + (this.input.mouseX - rect.left) * sx,
+      y: this.cam.y + (this.input.mouseY - rect.top) * sy,
+    };
   }
 
   loadSave() {
@@ -110,6 +199,11 @@ export class Game {
     const idx = this.world.parkedCars.indexOf(car);
     if (idx >= 0) this.world.parkedCars.splice(idx, 1);
     if (car === this.world.targetCar) this.world.targetCar.parked = false;
+    if (car === this.world.auroraCar) {
+      this.world.auroraCar.parked = false;
+      this.commitCrime(5);
+      this.addFlash('You stole the Aurora GT — the whole VCPD is coming!', 3.5);
+    }
     car.parked = false;
     car.speed = 0; // parked cars carry no speed field until they are driven
     this.player.car = car;
@@ -132,6 +226,11 @@ export class Game {
     this.player.y = py;
     this.player.inCar = false;
     this.player.car = null;
+    if (car === this.world.auroraCar) {
+      // The Aurora stays stealable where you left it.
+      this.world.auroraCar.parked = true;
+      return;
+    }
     if (!this.world.parkedCars.includes(car) && car !== this.world.targetCar) {
       this.world.parkedCars.push(car);
     }
@@ -150,6 +249,7 @@ export class Game {
     };
     for (const c of this.world.parkedCars) consider(c);
     if (this.world.targetCar.parked) consider(this.world.targetCar);
+    if (this.world.auroraCar.parked) consider(this.world.auroraCar);
     return best;
   }
 
@@ -186,6 +286,24 @@ export class Game {
       return { x: m.carTarget.x, y: m.carTarget.y, label: 'COMET GT' };
     }
     if (m.id === 4) return null;
+    if (m.id === 7) {
+      const c = this.world.courier;
+      return { x: c.x, y: c.y, label: 'COURIER' };
+    }
+    if (m.id === 8) return null;
+    if (m.id === 9) {
+      if (this.player.inCar && this.player.car && this.player.car.aurora) {
+        return { x: m.target.x, y: m.target.y, label: m.label };
+      }
+      const a = this.world.auroraCar;
+      if (a.parked) return { x: a.x, y: a.y, label: 'AURORA GT' };
+      return { x: m.target.x, y: m.target.y, label: m.label };
+    }
+    if (m.stops) {
+      const stop = m.stops[this.stopIndex];
+      if (!stop) return null;
+      return { x: stop.x, y: stop.y, label: stop.label };
+    }
     return { x: m.target.x, y: m.target.y, label: m.label };
   }
 
@@ -203,15 +321,21 @@ export class Game {
     }
     const next = this.currentMission();
     this.missionTimer = next.timer || 0;
+    this.startMission(next);
     if (next.id === 4 && this.wanted === 0) {
       this.wanted = 2;
       this.timeSinceCrime = 0;
       this.addFlash('The VCPD is all over you — lose them!', 3.5);
     }
+    if (next.id === 5) {
+      this.addFlash('New hardware: the pistol is yours now — aim with the mouse', 3.5);
+    }
     this.saveGame();
   }
 
-  damagePlayer(amount, reason) {
+  damagePlayer(amount, reason, isCrash) {
+    // Mara patches Dax up: crash damage is halved while she rides along.
+    if (isCrash && this.hasCrew('Mara')) amount *= 0.5;
     this.player.hp -= amount;
     this.sound.thud();
     if (this.player.hp <= 0) {
@@ -255,6 +379,13 @@ export class Game {
       policeCars: this.world.policeCars.length,
       footCops: this.world.footCops.length,
       pedsDown: this.world.peds.filter((p) => p.down > 0).length,
+      armed: this.isArmed(),
+      stopIndex: this.stopIndex,
+      dayTime: Math.round(this.dayTime * 100) / 100,
+      helis: this.world.helicopters.length,
+      bullets: this.world.bullets.length,
+      tailTime: Math.round(this.tailTime * 10) / 10,
+      getawayT: Math.round(this.getawayT * 10) / 10,
     };
   }
 
@@ -291,7 +422,11 @@ export class Game {
     if (this.state === 'title' && this.input.wasPressed('Enter')) {
       this.state = 'playing';
       this.player.hp = 100;
-      this.addFlash(`Mission ${this.missionIndex + 1}: ${this.currentMission().name}`, 3);
+      const cm = this.currentMission();
+      this.addFlash(
+        cm ? `Mission ${this.missionIndex + 1}: ${cm.name}` : 'Story complete — free roam, Velvet Bay is yours',
+        3
+      );
       this.centerCamera();
     } else if ((this.state === 'busted' || this.state === 'complete') && this.input.wasPressed('Enter')) {
       this.state = 'title';
@@ -313,6 +448,8 @@ export class Game {
     const driving = this.state === 'playing' && this.player.inCar && this.player.car;
     this.sound.setEngine(driving ? Math.abs(this.player.car.speed) / CAR_MAX_SPEED : 0, driving);
     this.sound.setSiren(this.state === 'playing' && this.wanted >= 1);
+    this.sound.setRotor(this.state === 'playing' && this.world.helicopters.length > 0);
+    this.sound.setBass(this.state === 'playing');
     this.sound.update(dt);
 
     drawGame(this.ctx, this);
@@ -325,28 +462,42 @@ export class Game {
     if (this.ramCd > 0) this.ramCd -= dt;
     if (this.player.punchCd > 0) this.player.punchCd -= dt;
     if (this.flash.ttl > 0) this.flash.ttl -= dt;
+    if (this.fireCd > 0) this.fireCd -= dt;
+    if (this.muzzleT > 0) this.muzzleT -= dt;
+    if (this.tailSpookCd > 0) this.tailSpookCd -= dt;
 
+    this.updateDayNight(dt);
+    this.updateMouseWorld();
     this.updatePlayer(dt);
     this.updateTraffic(dt);
     this.updatePeds(dt);
+    this.updateBeachgoers(dt);
+    this.updateCourier(dt);
+    this.updateHelis(dt);
+    this.updateBullets(dt);
     this.updatePolice(dt);
     if (this.state !== 'playing') return; // busted mid-update (ram / foot cop)
     this.updatePickups(dt);
 
-    // Wanted slowly cools off when the player stays clean.
-    if (this.wanted > 0 && this.timeSinceCrime > 14) {
+    // Wanted slowly cools off when the player stays clean. Vex on the crew
+    // makes the heat fade 40% faster; a helicopter spotlight freezes it.
+    const coolAfter = 14 * (this.hasCrew('Vex') ? 0.6 : 1);
+    if (this.wanted > 0 && this.timeSinceCrime > coolAfter && !this.heliSpotlightOn()) {
       this.wanted -= 1;
       this.timeSinceCrime = 0;
       if (this.wanted === 0) {
         this.world.policeCars = [];
         this.world.footCops = [];
+        this.world.helicopters = [];
         this.addFlash('You lost the cops!', 3);
       } else {
         this.addFlash('Heat cooling off…', 2);
       }
     }
+    // Mara patches Dax up three times as fast while the heat is off.
     if (this.wanted === 0 && this.player.hp < 100) {
-      this.player.hp = Math.min(100, this.player.hp + 3 * dt);
+      const healRate = this.hasCrew('Mara') ? 9 : 3;
+      this.player.hp = Math.min(100, this.player.hp + healRate * dt);
     }
 
     // Mission timer + arrival checks.
@@ -370,12 +521,189 @@ export class Game {
         }
       } else if (m.id === 4) {
         if (this.wanted === 0) this.completeMission();
+      } else if (m.stops) {
+        const stop = m.stops[this.stopIndex];
+        if (stop && dist(this.player.x, this.player.y, stop.x, stop.y) < 75) {
+          this.stopIndex += 1;
+          this.sound.blip(990, 0.1);
+          if (this.stopIndex >= m.stops.length) {
+            this.completeMission();
+          } else {
+            this.addFlash(`Stop ${this.stopIndex} of ${m.stops.length} — next: ${m.stops[this.stopIndex].label}`, 2.5);
+          }
+        }
+      } else if (m.id === 7) {
+        // The tail: stay in the band behind the courier.
+        const c = this.world.courier;
+        const d = dist(this.player.x, this.player.y, c.x, c.y);
+        if (d < 30) {
+          if (this.tailSpookCd <= 0) {
+            this.tailSpookCd = 3;
+            this.tailTime = 0;
+            this.addFlash('Too close — the courier spotted you!', 2.5);
+            const a = angleTo(c.x, c.y, this.player.x, this.player.y);
+            c.tx = clamp(c.x + Math.cos(a) * 300, 80, WORLD_W - 80);
+            c.ty = clamp(c.y + Math.sin(a) * 300, 80, WORLD_H - 80);
+          }
+        } else if (d <= 280) {
+          this.tailTime += dt;
+          if (this.tailTime >= 20) this.completeMission();
+        } else if (d > 320) {
+          this.tailTime = Math.max(0, this.tailTime - dt * 0.5);
+        }
+      } else if (m.id === 8) {
+        // The getaway: the clock only runs while the heat is at 3 stars.
+        if (this.wanted >= 3) {
+          this.getawayT -= dt;
+          if (this.getawayT <= 0) this.completeMission();
+        }
+      } else if (m.id === 9) {
+        if (
+          this.player.inCar &&
+          this.player.car &&
+          this.player.car.aurora &&
+          dist(this.player.x, this.player.y, m.target.x, m.target.y) < 80
+        ) {
+          this.completeMission();
+        }
       } else if (m.target && dist(this.player.x, this.player.y, m.target.x, m.target.y) < 75) {
         this.completeMission();
       }
     }
 
     this.centerCamera();
+  }
+
+  updateDayNight(dt) {
+    // One game-hour every 50 seconds, wrapping at midnight.
+    this.dayTime = (this.dayTime + dt / 50) % 24;
+  }
+
+  updateHelis(dt) {
+    const desired = this.wanted >= 5 ? 2 : this.wanted >= 4 ? 1 : 0;
+    if (this.world.helicopters.length < desired) {
+      this.heliSpawnT -= dt;
+      if (this.heliSpawnT <= 0) {
+        this.heliSpawnT = 1.0;
+        const a = this.rng() * Math.PI * 2;
+        this.world.helicopters.push({
+          x: clamp(this.player.x + Math.cos(a) * 520, 80, WORLD_W - 80),
+          y: clamp(this.player.y + Math.sin(a) * 520, 80, WORLD_H - 80),
+          hp: HELI_HP,
+          rotor: 0,
+          bob: this.rng() * Math.PI * 2,
+        });
+        this.sound.blip(440, 0.15);
+        this.addFlash('VCPD helicopter overhead!', 2.5);
+      }
+    }
+    if (this.world.helicopters.length > desired) {
+      this.world.helicopters.length = desired;
+    }
+    for (const h of this.world.helicopters) {
+      h.rotor += dt * 40;
+      h.bob += dt * 2;
+      // Drift toward the player, holding about 260px off.
+      const d = dist(h.x, h.y, this.player.x, this.player.y);
+      const want = 260;
+      const a = angleTo(h.x, h.y, this.player.x, this.player.y);
+      const sp = d > want + 40 ? 150 : d < want - 40 ? -60 : 0;
+      h.x = clamp(h.x + Math.cos(a) * sp * dt, 60, WORLD_W - 60);
+      h.y = clamp(h.y + Math.sin(a) * sp * dt, 60, WORLD_H - 60);
+    }
+  }
+
+  fireBullet() {
+    if (this.fireCd > 0) return;
+    const p = this.player;
+    const a = angleTo(p.x, p.y, this.mouseWorld.x, this.mouseWorld.y);
+    this.world.bullets.push({
+      x: p.x + Math.cos(a) * 22,
+      y: p.y + Math.sin(a) * 22,
+      vx: Math.cos(a) * 900,
+      vy: Math.sin(a) * 900,
+      life: 0.9,
+    });
+    this.fireCd = 0.22;
+    this.muzzleT = 0.08;
+    this.sound.shot();
+  }
+
+  updateBullets(dt) {
+    const w = this.world;
+    for (let i = w.bullets.length - 1; i >= 0; i--) {
+      const b = w.bullets[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.life -= dt;
+      let dead = b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H;
+      if (!dead) {
+        for (let j = w.helicopters.length - 1; j >= 0; j--) {
+          const h = w.helicopters[j];
+          if (dist(b.x, b.y, h.x, h.y) < 34) {
+            h.hp -= 1;
+            dead = true;
+            if (h.hp <= 0) {
+              w.helicopters.splice(j, 1);
+              this.cash += HELI_REWARD;
+              this.sound.explosion();
+              this.addFlash(`Helicopter down! +$${HELI_REWARD}`, 2.5);
+            }
+            break;
+          }
+        }
+      }
+      if (!dead) {
+        for (const pc of w.policeCars) {
+          if (dist(b.x, b.y, pc.x, pc.y) < 30) {
+            pc.slowT = 1.5;
+            dead = true;
+            break;
+          }
+        }
+      }
+      if (!dead) {
+        for (let j = w.footCops.length - 1; j >= 0; j--) {
+          const fc = w.footCops[j];
+          if (dist(b.x, b.y, fc.x, fc.y) < 26) {
+            w.footCops.splice(j, 1);
+            dead = true;
+            this.addFlash('Cop down!', 2);
+            break;
+          }
+        }
+      }
+      if (dead) w.bullets.splice(i, 1);
+    }
+  }
+
+  updateCourier(dt) {
+    const c = this.world.courier;
+    if (!c) return;
+    const d = dist(c.x, c.y, c.tx, c.ty);
+    if (d < 10) {
+      const vertical = this.rng() < 0.5;
+      if (vertical) {
+        const road = ROADS_V[Math.floor(this.rng() * ROADS_V.length)];
+        c.tx = road + (this.rng() < 0.5 ? -1 : 1) * (ROAD_W / 2 + 12);
+        c.ty = clamp(c.y + (this.rng() * 500 - 250), 100, WORLD_H - 100);
+      } else {
+        const road = ROADS_H[Math.floor(this.rng() * ROADS_H.length)];
+        c.ty = road + (this.rng() < 0.5 ? -1 : 1) * (ROAD_W / 2 + 12);
+        c.tx = clamp(c.x + (this.rng() * 500 - 250), 100, WORLD_W - 100);
+      }
+      return;
+    }
+    const step = Math.min(d, c.speed * dt);
+    const nx = c.x + ((c.tx - c.x) / d) * step;
+    const ny = c.y + ((c.ty - c.y) / d) * step;
+    if (!circleHitsBuildings(this.world.buildings, nx, ny, 10)) {
+      c.x = nx;
+      c.y = ny;
+    }
+    c.angle = Math.atan2(c.ty - c.y, c.tx - c.x);
+    c.x = clamp(c.x, 20, WORLD_W - 20);
+    c.y = clamp(c.y, 20, WORLD_H - 20);
   }
 
   updatePlayer(dt) {
@@ -399,17 +727,21 @@ export class Game {
 
     if (p.inCar && p.car) {
       const car = p.car;
+      // Rook at the wheel: +12% top speed and sharper steering.
+      const topSpeed = CAR_MAX_SPEED * (this.hasCrew('Rook') ? 1.12 : 1);
+      const steerRate = 2.4 * (this.hasCrew('Rook') ? 1.15 : 1);
       if (inp.isDown('KeyW', 'ArrowUp')) car.speed += CAR_ACCEL * dt;
       if (inp.isDown('KeyS', 'ArrowDown')) car.speed -= (car.speed > 0 ? 520 : 260) * dt;
       car.speed -= car.speed * 0.9 * dt;
-      car.speed = clamp(car.speed, -CAR_REVERSE_MAX, CAR_MAX_SPEED);
+      car.speed = clamp(car.speed, -CAR_REVERSE_MAX, topSpeed);
       const steer = (inp.isDown('KeyA', 'ArrowLeft') ? -1 : 0) + (inp.isDown('KeyD', 'ArrowRight') ? 1 : 0);
       if (Math.abs(car.speed) > 8) {
-        car.angle += steer * 2.4 * dt * Math.sign(car.speed) * Math.min(1, Math.abs(car.speed) / 160);
+        car.angle += steer * steerRate * dt * Math.sign(car.speed) * Math.min(1, Math.abs(car.speed) / 160);
       }
       const nx = car.x + Math.cos(car.angle) * car.speed * dt;
       const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-      if (!circleHitsBuildings(this.world.buildings, nx, ny, 20)) {
+      // Buildings and the bay both stop a car dead.
+      if (!circleHitsBuildings(this.world.buildings, nx, ny, 20) && !inWater(nx, ny, 20)) {
         car.x = nx;
         car.y = ny;
       } else {
@@ -430,7 +762,7 @@ export class Game {
           car.speed *= 0.55;
           if (this.ramCd <= 0) {
             this.ramCd = 0.8;
-            this.damagePlayer(4, 'Your ride was wrecked in a pile-up.');
+            this.damagePlayer(4, 'Your ride was wrecked in a pile-up.', true);
             if (Math.abs(car.speed) > 200 && this.crimeCd <= 0) {
               this.crimeCd = 5;
               this.commitCrime(1);
@@ -465,11 +797,17 @@ export class Game {
       const speed = inp.isDown('ShiftLeft', 'ShiftRight') ? RUN_SPEED : WALK_SPEED;
       const nx = p.x + mx * speed * dt;
       const ny = p.y + my * speed * dt;
-      if (!circleHitsBuildings(this.world.buildings, nx, p.y, 13)) p.x = nx;
-      if (!circleHitsBuildings(this.world.buildings, p.x, ny, 13)) p.y = ny;
+      // Buildings and the bay both block a walker.
+      if (!circleHitsBuildings(this.world.buildings, nx, p.y, 13) && !inWater(nx, p.y, 13)) p.x = nx;
+      if (!circleHitsBuildings(this.world.buildings, p.x, ny, 13) && !inWater(p.x, ny, 13)) p.y = ny;
       p.x = clamp(p.x, 20, WORLD_W - 20);
       p.y = clamp(p.y, 20, WORLD_H - 20);
       p.angle = Math.atan2(my, mx);
+    }
+
+    // Pistol: hold the mouse to fire once the piece is unlocked.
+    if (this.isArmed() && (inp.mouseDown || inp.mouseClicked)) {
+      this.fireBullet();
     }
 
     // Punch.
@@ -560,6 +898,27 @@ export class Game {
     }
   }
 
+  // Beachgoers wander up and down the sand strip, never into the water.
+  updateBeachgoers(dt) {
+    for (const b of this.world.beachgoers) {
+      if (b.down > 0) {
+        b.down -= dt;
+        continue;
+      }
+      const d = dist(b.x, b.y, b.tx, b.ty);
+      if (d < 8) {
+        b.tx = range(this.rng, SAND_X + 14, WATER_X - 16);
+        b.ty = clamp(b.y + (this.rng() * 400 - 200), 100, WORLD_H - 100);
+        continue;
+      }
+      const step = Math.min(d, b.speed * dt);
+      b.x += ((b.tx - b.x) / d) * step;
+      b.y += ((b.ty - b.y) / d) * step;
+      b.x = clamp(b.x, SAND_X + 10, WATER_X - 14);
+      b.y = clamp(b.y, 20, WORLD_H - 20);
+    }
+  }
+
   updatePolice(dt) {
     // Police cars.
     const desiredCars = this.wanted > 0 ? Math.min(this.wanted, 4) : 0;
@@ -573,7 +932,12 @@ export class Game {
     for (const pc of this.world.policeCars) {
       const target = angleTo(pc.x, pc.y, this.player.x, this.player.y);
       pc.angle = turnToward(pc.angle, target, 2.6 * dt);
-      const sp = 250 + this.wanted * 18;
+      // A bullet hit slows the cruiser for a while.
+      let sp = 250 + this.wanted * 18;
+      if (pc.slowT > 0) {
+        pc.slowT -= dt;
+        sp *= 0.5;
+      }
       const nx = pc.x + Math.cos(pc.angle) * sp * dt;
       const ny = pc.y + Math.sin(pc.angle) * sp * dt;
       if (!circleHitsBuildings(this.world.buildings, nx, ny, 20)) {
@@ -586,7 +950,7 @@ export class Game {
       if (dist(pc.x, pc.y, this.player.x, this.player.y) < 50 && pc.ramCd <= 0) {
         pc.ramCd = 1.0;
         if (this.player.inCar && this.player.car) this.player.car.speed *= 0.45;
-        this.damagePlayer(7, 'Your ride was wrecked by the VCPD.');
+        this.damagePlayer(7, 'Your ride was wrecked by the VCPD.', true);
       }
     }
 
