@@ -526,6 +526,7 @@ function drawHUD(ctx, g) {
   ctx.fillText('CREW  VEX · ROOK · MARA', 158, 144);
 
   drawMinimap(ctx, g);
+  drawVaultAlarm(ctx, g);
 
   // Mission panel.
   const m = g.currentMission();
@@ -604,6 +605,44 @@ function drawHUD(ctx, g) {
     ctx.fillStyle = '#ffe9a8';
     ctx.fillText(g.flash.text, VIEW_W / 2, 147);
   }
+  ctx.textAlign = 'left';
+}
+
+// Vault alarm: while the vault is cracking, a pulsing red frame and a banner
+// warn the player the alarm is live, the heat is climbing, and the crack
+// still needs holding. The pulse rides on g.time so it breathes even when
+// the player is standing still inside the gold ring.
+function drawVaultAlarm(ctx, g) {
+  if (g.vaultStage !== 'cracking') return;
+  const pulse = 0.5 + 0.5 * Math.sin(g.time * 6);
+  const frameAlpha = 0.25 + 0.45 * pulse;
+  const frac = Math.min(1, g.vaultT / VAULT_HOLD_SECONDS);
+  ctx.save();
+  ctx.strokeStyle = `rgba(231, 76, 60, ${frameAlpha})`;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(4, 4, VIEW_W - 8, VIEW_H - 8);
+  ctx.strokeStyle = `rgba(231, 76, 60, ${frameAlpha * 0.6})`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(12, 12, VIEW_W - 24, VIEW_H - 24);
+  const label = 'VAULT ALARM';
+  ctx.font = 'bold 22px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  const tw = ctx.measureText(label).width + 44;
+  ctx.fillStyle = `rgba(8, 12, 18, ${0.55 + 0.25 * pulse})`;
+  rr(ctx, VIEW_W / 2 - tw / 2, 168, tw, 66, 10);
+  ctx.fill();
+  ctx.fillStyle = `rgba(255, 90, 70, ${0.6 + 0.4 * pulse})`;
+  ctx.fillText(label, VIEW_W / 2, 194);
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.fillStyle = '#ffd9d4';
+  ctx.fillText(`cracking ${Math.floor(g.vaultT)}s / ${VAULT_HOLD_SECONDS}s — heat +${g.vaultHeat}`, VIEW_W / 2, 216);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+  rr(ctx, VIEW_W / 2 - tw / 2 + 14, 224, tw - 28, 6, 3);
+  ctx.fill();
+  ctx.fillStyle = `rgba(245, 197, 24, ${0.7 + 0.3 * pulse})`;
+  rr(ctx, VIEW_W / 2 - tw / 2 + 14, 224, (tw - 28) * frac, 6, 3);
+  ctx.fill();
+  ctx.restore();
   ctx.textAlign = 'left';
 }
 

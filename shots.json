@@ -10,8 +10,14 @@
   {
     "mission": "The Vault",
     "name": "3-mission.jpg",
-    "note": "vault cracking at 18s of 30s, wanted 3, dusk over the bank",
-    "query": "?shot=mission"
+    "note": "the vault door grinds open at 18 of 30 held seconds while the alarm pushes wanted to 3 stars and dusk settles over Bay National Bank",
+    "query": "?shot=mission",
+    "vault": {
+      "stage": "cracking",
+      "heldSeconds": 18,
+      "alarmStars": 3,
+      "light": "dusk, gold ring glowing on the bank floor, minimap escape route dashed in gold"
+    }
   },
   {
     "name": "4-end.jpg",
